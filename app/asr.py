@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from app.config import Settings
+from app.model_download import download_model
 from app.schemas import Segment, Transcription, Word
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,6 @@ class WhisperService:
         logger.info("CTranslate2 version: %s", ctranslate2.__version__)
         self._stage("import faster-whisper")
         from faster_whisper import WhisperModel
-        from faster_whisper.utils import download_model
 
         settings = self.settings
         if settings.whisper_device == "cuda":
@@ -78,17 +78,19 @@ class WhisperService:
         else:
             self._stage("resolve/download model files (network or local cache)")
             logger.info(
-                "Model=%s; HF_ENDPOINT=%s; cache=%s; local_files_only=%s; HF_HUB_OFFLINE=%s",
+                "Model=%s; explicit HF_ENDPOINT=%s; cache=%s; local_files_only=%s; HF_HUB_OFFLINE=%s",
                 settings.whisper_model,
-                os.environ.get("HF_ENDPOINT"),
+                settings.hf_endpoint,
                 settings.whisper_download_root.resolve(),
                 settings.whisper_local_files_only,
-                os.environ.get("HF_HUB_OFFLINE", "0"),
+                settings.hf_hub_offline,
             )
             model_path = download_model(
                 settings.whisper_model,
+                endpoint=settings.hf_endpoint,
                 cache_dir=str(settings.whisper_download_root),
-                local_files_only=settings.whisper_local_files_only,
+                local_files_only=settings.whisper_local_files_only or settings.hf_hub_offline,
+                token=settings.hf_token.get_secret_value() or None,
             )
             logger.info("Model files available: %s", model_path)
 

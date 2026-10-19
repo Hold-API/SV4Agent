@@ -109,6 +109,16 @@ WHISPER_LOCAL_FILES_ONLY=false
 
 首次启动需联网下载模型，公开 Whisper 模型无需填写 `HF_TOKEN`。模型下载和加载完成前，HTTP 服务不会完成启动；此时健康检查可能连接失败。
 
+下载调用会**显式传入配置中的 `HF_ENDPOINT`**，用于仓库元数据和文件下载请求，不依赖 Hugging Face 库导入时的默认 endpoint。应用不会在镜像失败后自动切换到官方 Hub；下载服务自身仍可能将文件请求重定向到存储/CDN 地址。
+
+启动日志会显示 `.env` 的绝对路径、文件是否存在，以及 `Effective HF_ENDPOINT`。若显示文件不存在，请确认文件名确实是 `.env`，而不是 `.env.txt` 或只有 `.env.example`。若进程环境覆盖了文件中的 `HF_ENDPOINT`，会输出覆盖警告；需要调整启动进程的同名环境变量并重启。编辑 `.env.example` 不会改变运行配置。
+
+可在项目目录单独检查有效配置，不会下载模型或输出 token：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from app.config import ENV_FILE, get_settings; s=get_settings(); print('env_file:', ENV_FILE); print('exists:', ENV_FILE.is_file()); print('HF_ENDPOINT:', s.hf_endpoint); print('HF_HUB_OFFLINE:', s.hf_hub_offline)"
+```
+
 请保留 `models` 和 `.cache` 目录。相对路径以进程工作目录为基准，前台运行和后台任务均应使用项目根目录作为工作目录。
 
 需要离线部署时，可以在联网机器上使用相同配置完成一次启动，再复制项目、`models` 和 `.cache` 到目标机器；Python 依赖也需提前安装。确认模型文件齐全后设置：
@@ -325,6 +335,7 @@ Start-ScheduledTask -TaskName "AsrFast"
 | `Configured CUDA device unavailable` | 先确认 `nvidia-smi` 可用，再检查驱动、DLL 路径和 `WHISPER_DEVICE_INDEX`；只有一张卡时通常设为 `0` |
 | `no kernel image`、架构或精度相关错误 | 检查是否仍安装了旧版 CTranslate2 或较早的 CUDA 12；确认使用本项目虚拟环境、固定的 CTranslate2 4.6.3 和 `float16` |
 | 首次启动长时间未就绪 | 查看日志确认模型下载进度；检查 HF Mirror 网络连通性、磁盘空间和下载目录写权限；首次下载不要启用离线模式 |
+| HF 镜像配置似乎未生效 | 查看 `.env` 的实际路径及 `Effective HF_ENDPOINT`；排除 `.env.txt`、只修改 `.env.example`、进程环境变量覆盖和修改后未重启；文件 CDN 跳转本身不代表 endpoint 未生效 |
 | 停在 `Waiting for application startup` | 保持 `APP_LOG_LEVEL=info`，查看最后的 `Startup stage` 和每 15 秒的等待提示；使用前台日志命令保存输出，确认进程是否退出 |
 | GPU 显存不足 | 确认没有重复服务进程或其他 GPU 任务，保持并发为 1；仍不足时可改用 `turbo` / `small` 并重启 |
 | 本机可访问，其他机器不可访问 | 检查监听地址、Windows 防火墙、服务器 IP、客户端网段和云安全组 |

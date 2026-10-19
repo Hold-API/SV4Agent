@@ -5,12 +5,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env", override=False)
+ENV_FILE = PROJECT_ROOT / ".env"
+# Windows editors may save UTF-8 with a BOM. Accept both forms.
+DOTENV_HF_ENDPOINT = dotenv_values(ENV_FILE, encoding="utf-8-sig").get("HF_ENDPOINT")
+load_dotenv(ENV_FILE, override=False, encoding="utf-8-sig")
 
 # Hub constants are read on import. These must be set even without a .env file.
 for name, value in {
@@ -34,6 +37,10 @@ class Settings(BaseSettings):
     app_max_audio_seconds: float = Field(default=1800, gt=0)
     app_max_concurrent_requests: int = Field(default=1, ge=1, le=16)
     app_queue_timeout_seconds: float = Field(default=30, gt=0)
+
+    hf_endpoint: str = Field(default="https://hf-mirror.com", min_length=1)
+    hf_token: SecretStr = SecretStr("")
+    hf_hub_offline: bool = False
 
     whisper_model: str = Field(default="large-v3", min_length=1)
     whisper_download_root: Path = PROJECT_ROOT / "models"
