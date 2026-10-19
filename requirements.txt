@@ -1,0 +1,11 @@
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+fastapi>=0.115.6,<1.0
+uvicorn[standard]>=0.34.0,<1.0
+python-multipart>=0.0.20,<1.0
+pydantic-settings>=2.7.0,<3.0
+python-dotenv>=1.0.1,<2.0
+anyio>=4.8.0,<5.0
+faster-whisper>=1.2.0,<2.0
+# 4.6.3 adds CUDA 12.8 support; use recent Windows wheels for RTX 50 series.
+ctranslate2==4.6.3
