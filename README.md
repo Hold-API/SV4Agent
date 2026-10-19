@@ -20,7 +20,7 @@
 | CUDA Toolkit | **12.8** | 从 [CUDA 12.8 下载页](https://developer.nvidia.com/cuda-12-8-0-download-archive)选择 Windows x86_64 |
 | cuDNN | **9.8 或更新的兼容 9.x 版本，CUDA 12 构建** | 从 [cuDNN 下载页](https://developer.nvidia.com/cudnn-downloads)安装支持 Blackwell 的版本 |
 | Visual C++ Runtime | x64 | 安装 [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170) |
-| Python | **3.11 x64**，也可用 3.12 x64 | 从 [Python 官网](https://www.python.org/downloads/windows/)安装，启用 Python Launcher |
+| Python | **标准 CPython 3.13 x64** | 从 [Python 官网](https://www.python.org/downloads/windows/)安装，启用 Python Launcher；不要选择 free-threaded `3.13t` 构建 |
 | Git | Windows 版 | 从 [Git 官网](https://git-scm.com/downloads/win)安装，用于拉取和更新项目 |
 
 RTX 5070 属于 Blackwell 架构，部署时请明确使用 CUDA **12.8**，不要只确认安装了“CUDA 12”。项目固定 `ctranslate2==4.6.3`，该版本加入了 CUDA 12.8 支持。版本依据见 [CTranslate2 4.6.3 发布说明](https://github.com/OpenNMT/CTranslate2/releases/tag/v4.6.3)；cuDNN 与 Blackwell 的组合见 [NVIDIA cuDNN 9.8 支持矩阵](https://docs.nvidia.com/deeplearning/cudnn/backend/v9.8.0/reference/support-matrix.html)。这是部署目标配置，仍需在实际服务器完成启动和音频转写验证。
@@ -32,7 +32,7 @@ RTX 5070 属于 Blackwell 架构，部署时请明确使用 CUDA **12.8**，不�
 ```powershell
 nvidia-smi
 nvcc --version
-py -3.11 --version
+py -3.13 --version
 ```
 
 `nvidia-smi` 应能显示 RTX 5070。它显示的 `CUDA Version` 是驱动支持的 CUDA 版本上限，不能代替 Toolkit 安装检查；Toolkit 版本以 `nvcc --version` 为准。
@@ -44,7 +44,7 @@ New-Item -ItemType Directory -Force D:\services | Out-Null
 git clone https://gitee.com/pinxue/asr-fast.git D:\services\asr-fast
 Set-Location D:\services\asr-fast
 
-py -3.11 -m venv .venv
+py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip check
@@ -53,7 +53,15 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-全程直接调用虚拟环境的 Python，不需要执行 `Activate.ps1` 或修改 PowerShell 执行策略。若安装的是 Python 3.12，把创建环境时的 `py -3.11` 改为 `py -3.12`。
+全程直接调用虚拟环境的 Python，不需要执行 `Activate.ps1` 或修改 PowerShell 执行策略。若已有其他 Python 版本创建的 `.venv`，先停止服务并移走旧环境，再用 Python 3.13 重新创建，不能直接复用旧环境。
+
+项目固定的 CTranslate2 4.6.3 已发布 `cp313-cp313-win_amd64` wheel，见 [PyPI 文件列表](https://pypi.org/project/ctranslate2/4.6.3/#files)。这里使用普通 CPython 3.13，未验证 free-threaded 构建。
+
+安装后确认虚拟环境实际使用的版本：
+
+```powershell
+.\.venv\Scripts\python.exe --version
+```
 
 `requirements.txt` 已内置清华源。**pip 不会自动读取 `.env`**；单独安装其他包时，可以显式添加 `--index-url https://pypi.tuna.tsinghua.edu.cn/simple`。
 
@@ -311,4 +319,4 @@ Start-ScheduledTask -TaskName "AsrFast"
 | 返回 `503` | 查看是否已就绪；若为容量不足，可按 `Retry-After` 重试、减少请求数或调整排队等待时间 |
 | 计划任务显示运行，但接口失败 | 查看 `logs\server.log`；检查运行账户权限、实际 DLL 路径、工作目录以及模型下载是否完成 |
 
-仓库目前提供代码、配置和部署步骤；Windows + RTX 5070 的实际安装、开机启动及真实音频转写需在目标服务器验收。
+已使用清华源，针对 Windows x64 / CPython 3.13 完成全部依赖的二进制包解析检查；这验证了依赖可解析和 wheel 可用。Windows + RTX 5070 的实际安装、开机启动及真实音频转写仍需在目标服务器验收。
