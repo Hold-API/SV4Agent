@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import BinaryIO
 
-from app.config import Settings
+from app.config import PROJECT_ROOT, Settings
 from app.model_download import download_model
 from app.schemas import Segment, Transcription, Word
 
@@ -72,27 +72,17 @@ class WhisperService:
             if settings.whisper_compute_type not in {"auto", "default"} | supported:
                 raise RuntimeError(f"Unsupported CUDA compute type; supported types: {sorted(supported)}")
 
-        model_path = settings.whisper_model
-        if Path(model_path).is_dir():
-            logger.info("Using local model directory: %s", Path(model_path).resolve())
-        else:
-            self._stage("resolve/download model files (network or local cache)")
-            logger.info(
-                "Model=%s; explicit HF_ENDPOINT=%s; cache=%s; local_files_only=%s; HF_HUB_OFFLINE=%s",
-                settings.whisper_model,
-                settings.hf_endpoint,
-                settings.whisper_download_root.resolve(),
-                settings.whisper_local_files_only,
-                settings.hf_hub_offline,
-            )
-            model_path = download_model(
-                settings.whisper_model,
-                endpoint=settings.hf_endpoint,
-                cache_dir=str(settings.whisper_download_root),
-                local_files_only=settings.whisper_local_files_only or settings.hf_hub_offline,
-                token=settings.hf_token.get_secret_value() or None,
-            )
-            logger.info("Model files available: %s", model_path)
+        self._stage("resolve local model or download from ModelScope")
+        model_path = download_model(
+            settings.whisper_model,
+            endpoint=settings.modelscope_endpoint,
+            revision=settings.modelscope_revision,
+            cache_dir=str(settings.whisper_download_root),
+            local_files_only=settings.whisper_local_files_only,
+            token=settings.modelscope_api_token.get_secret_value() or None,
+            project_root=PROJECT_ROOT,
+        )
+        logger.info("Model files available: %s", model_path)
 
         self._stage("load model into device memory")
         self.model = WhisperModel(
@@ -102,8 +92,8 @@ class WhisperService:
             compute_type=settings.whisper_compute_type,
             cpu_threads=settings.whisper_cpu_threads,
             num_workers=settings.app_max_concurrent_requests,
-            download_root=str(settings.whisper_download_root),
-            local_files_only=settings.whisper_local_files_only,
+            # Only load the validated local snapshot, including its tokenizer.
+            local_files_only=True,
         )
         language = settings.whisper_language.strip() or None
         if language and language not in self.model.supported_languages:

@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.asr import AudioTooLong, InvalidAudio, UnsupportedLanguage, WhisperService
-from app.config import DOTENV_HF_ENDPOINT, ENV_FILE, get_settings
+from app.config import DOTENV_MODELSCOPE_ENDPOINT, ENV_FILE, get_settings
 from app.logging_config import configure_logging
 from app.schemas import Transcription
 
@@ -39,12 +39,12 @@ async def lifespan(app: FastAPI):
     started = time.monotonic()
     try:
         logger.info("Configuration file: %s; exists=%s", ENV_FILE, ENV_FILE.is_file())
-        logger.info("Effective HF_ENDPOINT (explicit download argument): %s", settings.hf_endpoint)
+        logger.info("Model download source: ModelScope; endpoint=%s", settings.modelscope_endpoint)
         if (
-            DOTENV_HF_ENDPOINT is not None
-            and DOTENV_HF_ENDPOINT.strip().rstrip("/") != settings.hf_endpoint.strip().rstrip("/")
+            DOTENV_MODELSCOPE_ENDPOINT is not None
+            and DOTENV_MODELSCOPE_ENDPOINT.strip().rstrip("/") != settings.modelscope_endpoint.strip().rstrip("/")
         ):
-            logger.warning("HF_ENDPOINT in .env is overridden by the process environment")
+            logger.warning("MODELSCOPE_ENDPOINT in .env is overridden by the process environment")
         logger.info("Loading model %s on %s", settings.whisper_model, settings.whisper_device)
         try:
             async with anyio.create_task_group() as startup_tasks:

@@ -2,8 +2,8 @@
 
 使用 FastAPI 对外提供 faster-whisper 音频转写服务，默认运行在 **Windows x64 + NVIDIA RTX 5070 + CUDA GPU** 上。
 
-- 默认模型：`large-v3`，计算精度：`float16`。
-- Python 依赖使用清华 PyPI 镜像，模型通过 `https://hf-mirror.com` 下载。
+- 默认模型：[ModelScope 的 Systran/faster-whisper-large-v3](https://www.modelscope.cn/models/Systran/faster-whisper-large-v3)，计算精度：`float16`。
+- Python 依赖使用清华 PyPI 镜像，模型通过 ModelScope 下载。
 - 提供音频上传、语言检测、分段时间戳、可选词级时间戳和英文翻译。
 - 支持 Bearer API Key、单文件大小限制、音频时长限制和推理并发控制。
 
@@ -74,7 +74,7 @@ notepad .env
 保留以下 GPU 默认值：
 
 ```dotenv
-WHISPER_MODEL=large-v3
+WHISPER_MODEL=Systran/faster-whisper-large-v3
 WHISPER_DEVICE=cuda
 WHISPER_DEVICE_INDEX=0
 WHISPER_COMPUTE_TYPE=float16
@@ -93,42 +93,64 @@ CUDA_DLL_DIRS="C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8/bin;C:/P
 
 程序会在导入原生库前注册 DLL 目录。GPU 不可用时启动失败，不会自动切到 CPU。若需手动使用 CPU，须同时改成 `WHISPER_DEVICE=cpu` 和 `WHISPER_COMPUTE_TYPE=int8`。
 
-### 模型镜像与缓存
+### ModelScope 模型下载与缓存
 
 ```dotenv
-HF_ENDPOINT=https://hf-mirror.com
-HF_HOME=.cache/huggingface
-HF_HUB_DISABLE_XET=1
-HF_HUB_ETAG_TIMEOUT=30
-HF_HUB_DOWNLOAD_TIMEOUT=120
-HF_HUB_OFFLINE=0
-HF_TOKEN=
-WHISPER_DOWNLOAD_ROOT=./models
+MODELSCOPE_ENDPOINT=https://modelscope.cn
+MODELSCOPE_API_TOKEN=
+MODELSCOPE_REVISION=master
+MODELSCOPE_API_TIMEOUT=30
+MODELSCOPE_DOWNLOAD_TIMEOUT=120
+WHISPER_MODEL=Systran/faster-whisper-large-v3
+WHISPER_DOWNLOAD_ROOT=./models/modelscope
 WHISPER_LOCAL_FILES_ONLY=false
 ```
 
-首次启动需联网下载模型，公开 Whisper 模型无需填写 `HF_TOKEN`。模型下载和加载完成前，HTTP 服务不会完成启动；此时健康检查可能连接失败。
+首次启动会从指定的 ModelScope 仓库下载模型，公开仓库无需填写 `MODELSCOPE_API_TOKEN`。模型下载和加载完成前，HTTP 服务不会完成启动；此时健康检查可能连接失败。
 
-下载调用会**显式传入配置中的 `HF_ENDPOINT`**，用于仓库元数据和文件下载请求，不依赖 Hugging Face 库导入时的默认 endpoint。应用不会在镜像失败后自动切换到官方 Hub；下载服务自身仍可能将文件请求重定向到存储/CDN 地址。
+程序通过 ModelScope SDK 显式传入 endpoint、token、revision、缓存目录及仅本地模式。`MODELSCOPE_REVISION` 为仓库分支、标签或版本，默认 `master`；两个超时参数由 SDK 在导入时读取，单位为秒，不是整个启动过程的总时限。应用不会在下载失败后切换到 Hugging Face；ModelScope 自身仍可能将文件请求重定向到对象存储/CDN。
 
-启动日志会显示 `.env` 的绝对路径、文件是否存在，以及 `Effective HF_ENDPOINT`。若显示文件不存在，请确认文件名确实是 `.env`，而不是 `.env.txt` 或只有 `.env.example`。若进程环境覆盖了文件中的 `HF_ENDPOINT`，会输出覆盖警告；需要调整启动进程的同名环境变量并重启。编辑 `.env.example` 不会改变运行配置。
+启动日志会显示 `.env` 的绝对路径、文件是否存在，以及 `Model download source: ModelScope; endpoint=...`。若显示文件不存在，请确认文件名确实是 `.env`，而不是 `.env.txt` 或只有 `.env.example`。若进程环境覆盖了文件中的 `MODELSCOPE_ENDPOINT`，会输出覆盖警告；需要调整启动进程的同名环境变量并重启。编辑 `.env.example` 不会改变运行配置。
 
 可在项目目录单独检查有效配置，不会下载模型或输出 token：
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from app.config import ENV_FILE, get_settings; s=get_settings(); print('env_file:', ENV_FILE); print('exists:', ENV_FILE.is_file()); print('HF_ENDPOINT:', s.hf_endpoint); print('HF_HUB_OFFLINE:', s.hf_hub_offline)"
+.\.venv\Scripts\python.exe -c "from app.config import ENV_FILE, get_settings; s=get_settings(); print('env_file:', ENV_FILE); print('exists:', ENV_FILE.is_file()); print('MODELSCOPE_ENDPOINT:', s.modelscope_endpoint); print('WHISPER_MODEL:', s.whisper_model); print('WHISPER_LOCAL_FILES_ONLY:', s.whisper_local_files_only)"
 ```
 
-请保留 `models` 和 `.cache` 目录。相对路径以进程工作目录为基准，前台运行和后台任务均应使用项目根目录作为工作目录。
+`WHISPER_MODEL` 可填写完整 ModelScope 仓库 ID，或填写 `large-v3` / `large`（均映射到 `Systran/faster-whisper-large-v3`）。也支持 `tiny` / `base` / `small` / `medium` 及对应 `.en` 版本、`large-v1`、`large-v2`；`turbo` / `large-v3-turbo` 映射到 ModelScope 的 `pengzhendong/faster-whisper-large-v3-turbo`。选择其他仓库时，必须确认它提供 CTranslate2 格式的权重和 tokenizer。
 
-需要离线部署时，可以在联网机器上使用相同配置完成一次启动，再复制项目、`models` 和 `.cache` 到目标机器；Python 依赖也需提前安装。确认模型文件齐全后设置：
+请保留 `models` 目录；相对的本地模型路径和 `WHISPER_DOWNLOAD_ROOT` **以项目根目录为基准**。前台运行和后台任务仍统一使用项目根目录作为工作目录。
+
+### 手动下载与离线加载
+
+安装项目依赖后，可在项目目录执行以下命令，下载同一个 Systran 模型到指定目录。命令依据见 [ModelScope 官方下载说明](https://github.com/modelscope/modelscope/blob/master/docs/source/command.md#download)。
+
+```powershell
+.\.venv\Scripts\modelscope.exe download --model Systran/faster-whisper-large-v3 --local_dir .\models\large-v3
+```
+
+下载成功后，将 `.env` 改为：
 
 ```dotenv
-HF_HUB_OFFLINE=1
+WHISPER_MODEL=./models/large-v3
 WHISPER_LOCAL_FILES_ONLY=true
 ```
 
-也可以将 `WHISPER_MODEL` 指向完整的本地 **CTranslate2 格式**模型目录，其中应包含模型权重、配置和 tokenizer 等文件。它不是原始 PyTorch checkpoint 目录。
+程序会校验 `config.json`、`model.bin`、`tokenizer.json` 和词表文件（`vocabulary.json` 或 `vocabulary.txt`），并拒绝空的必要文件、Git LFS 指针权重。校验通过后仅从本地目录加载推理模型；这项文件检查不等于完成了真实推理验证。
+
+需要离线部署时，复制下载完整的模型目录到服务器，将 `WHISPER_MODEL` 指向它，并设置 `WHISPER_LOCAL_FILES_ONLY=true`；Python 依赖和 CUDA/cuDNN 仍需提前安装。也可保留仓库 ID，使用已有的 ModelScope 缓存配合仅本地模式启动；缺失缓存会报错，不会自动联网。
+
+### 从旧 HF 配置升级
+
+更新代码后重新执行 `pip install -r requirements.txt`，并对照新版 `.env.example` 更新配置：
+
+- `WHISPER_MODEL` 使用 `Systran/faster-whisper-large-v3`，或保留已有完整本地模型目录。
+- 自动下载使用 `WHISPER_DOWNLOAD_ROOT=./models/modelscope`，旧 HF 缓存目录不会自动迁移。
+- 本地已有完整的 CTranslate2 模型可以继续复用，不需要因为更换下载平台而重新下载。
+- 旧 `HF_ENDPOINT`、`HF_TOKEN`、`HF_HOME`、`HF_HUB_OFFLINE` 等配置不再控制本项目下载流程；按上文配置 ModelScope 和 `WHISPER_LOCAL_FILES_ONLY` 即可。
+
+faster-whisper 自身仍依赖 `huggingface-hub` 包，因此安装列表中出现它属于正常情况；项目下载调用已切换到 ModelScope，传入推理引擎的始终是经过校验的本地目录。
 
 ### 服务与默认转写参数
 
@@ -334,8 +356,9 @@ Start-ScheduledTask -TaskName "AsrFast"
 | DLL 存在但仍报加载失败 | 检查 VC++ x64 Runtime、DLL 的依赖，以及 PATH 中是否混入旧版 CUDA/cuDNN；修改后重启进程 |
 | `Configured CUDA device unavailable` | 先确认 `nvidia-smi` 可用，再检查驱动、DLL 路径和 `WHISPER_DEVICE_INDEX`；只有一张卡时通常设为 `0` |
 | `no kernel image`、架构或精度相关错误 | 检查是否仍安装了旧版 CTranslate2 或较早的 CUDA 12；确认使用本项目虚拟环境、固定的 CTranslate2 4.6.3 和 `float16` |
-| 首次启动长时间未就绪 | 查看日志确认模型下载进度；检查 HF Mirror 网络连通性、磁盘空间和下载目录写权限；首次下载不要启用离线模式 |
-| HF 镜像配置似乎未生效 | 查看 `.env` 的实际路径及 `Effective HF_ENDPOINT`；排除 `.env.txt`、只修改 `.env.example`、进程环境变量覆盖和修改后未重启；文件 CDN 跳转本身不代表 endpoint 未生效 |
+| 首次启动长时间未就绪 | 查看日志确认模型下载阶段；检查 ModelScope 网络连通性、磁盘空间和缓存目录写权限；首次下载保持 `WHISPER_LOCAL_FILES_ONLY=false` |
+| ModelScope 配置似乎未生效 | 查看 `.env` 的实际路径及 `Model download source: ModelScope`；排除 `.env.txt`、只修改 `.env.example`、进程环境变量覆盖和修改后未重启 |
+| 本地模型提示文件不完整 | 确认目录内包含 `model.bin`、`config.json`、`tokenizer.json` 和词表；不要把 Hugging Face 缓存根目录或未下载的 Git LFS 指针当成模型目录 |
 | 停在 `Waiting for application startup` | 保持 `APP_LOG_LEVEL=info`，查看最后的 `Startup stage` 和每 15 秒的等待提示；使用前台日志命令保存输出，确认进程是否退出 |
 | GPU 显存不足 | 确认没有重复服务进程或其他 GPU 任务，保持并发为 1；仍不足时可改用 `turbo` / `small` 并重启 |
 | 本机可访问，其他机器不可访问 | 检查监听地址、Windows 防火墙、服务器 IP、客户端网段和云安全组 |

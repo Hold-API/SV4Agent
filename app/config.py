@@ -1,4 +1,4 @@
-"""Load .env before importing CTranslate2 or Hugging Face libraries."""
+"""Load .env before importing native inference or ModelScope libraries."""
 
 import os
 from functools import lru_cache
@@ -12,16 +12,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_ROOT / ".env"
 # Windows editors may save UTF-8 with a BOM. Accept both forms.
-DOTENV_HF_ENDPOINT = dotenv_values(ENV_FILE, encoding="utf-8-sig").get("HF_ENDPOINT")
+DOTENV_MODELSCOPE_ENDPOINT = dotenv_values(ENV_FILE, encoding="utf-8-sig").get("MODELSCOPE_ENDPOINT")
 load_dotenv(ENV_FILE, override=False, encoding="utf-8-sig")
 
-# Hub constants are read on import. These must be set even without a .env file.
+# ModelScope SDK timeout constants are read on import.
 for name, value in {
-    "HF_ENDPOINT": "https://hf-mirror.com",
-    "HF_HOME": str(PROJECT_ROOT / ".cache" / "huggingface"),
-    "HF_HUB_DISABLE_XET": "1",
-    "HF_HUB_ETAG_TIMEOUT": "30",
-    "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+    "MODELSCOPE_ENDPOINT": "https://modelscope.cn",
+    "MODELSCOPE_API_TIMEOUT": "30",
+    "MODELSCOPE_DOWNLOAD_TIMEOUT": "120",
 }.items():
     os.environ.setdefault(name, value)
 
@@ -38,12 +36,12 @@ class Settings(BaseSettings):
     app_max_concurrent_requests: int = Field(default=1, ge=1, le=16)
     app_queue_timeout_seconds: float = Field(default=30, gt=0)
 
-    hf_endpoint: str = Field(default="https://hf-mirror.com", min_length=1)
-    hf_token: SecretStr = SecretStr("")
-    hf_hub_offline: bool = False
+    modelscope_endpoint: str = Field(default="https://modelscope.cn", min_length=1)
+    modelscope_api_token: SecretStr = SecretStr("")
+    modelscope_revision: str = Field(default="master", min_length=1)
 
-    whisper_model: str = Field(default="large-v3", min_length=1)
-    whisper_download_root: Path = PROJECT_ROOT / "models"
+    whisper_model: str = Field(default="Systran/faster-whisper-large-v3", min_length=1)
+    whisper_download_root: Path = PROJECT_ROOT / "models" / "modelscope"
     whisper_local_files_only: bool = False
     whisper_device: Literal["cuda", "cpu"] = "cuda"
     whisper_device_index: int = Field(default=0, ge=0)
