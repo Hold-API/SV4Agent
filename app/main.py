@@ -1,5 +1,6 @@
 import logging
 import secrets
+import time
 from contextlib import asynccontextmanager
 from functools import partial
 from typing import Annotated, Literal
@@ -10,23 +11,46 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.asr import AudioTooLong, InvalidAudio, UnsupportedLanguage, WhisperService
 from app.config import get_settings
+from app.logging_config import configure_logging
 from app.schemas import Transcription
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
+async def report_startup(service: WhisperService, started: float) -> None:
+    while True:
+        await anyio.sleep(15)
+        logger.info(
+            "Startup still in progress: stage=%s; elapsed=%.0fs",
+            service.startup_stage,
+            time.monotonic() - started,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    configure_logging(settings.app_log_level)
     service = WhisperService(settings)
     app.state.service = service
     app.state.slots = anyio.Semaphore(settings.app_max_concurrent_requests)
     app.state.ready = False
+    started = time.monotonic()
     try:
         logger.info("Loading model %s on %s", settings.whisper_model, settings.whisper_device)
-        await anyio.to_thread.run_sync(service.load)
+        try:
+            async with anyio.create_task_group() as startup_tasks:
+                startup_tasks.start_soon(report_startup, service, started)
+                try:
+                    await anyio.to_thread.run_sync(service.load)
+                finally:
+                    startup_tasks.cancel_scope.cancel()
+        except Exception:
+            logger.exception("Startup failed at stage: %s", service.startup_stage)
+            raise
         app.state.ready = True
+        logger.info("Model ready after %.1fs; HTTP startup can complete", time.monotonic() - started)
         yield
     finally:
         app.state.ready = False

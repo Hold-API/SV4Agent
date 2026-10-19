@@ -153,6 +153,17 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 就绪后返回 `{"status":"ok"}`。接口文档位于 [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。健康检查表示模型已加载；还应上传实际音频完成一次转写，以验证 GPU 推理及解码链路。
 
+如果只看到 `Started server process` 和 `Waiting for application startup`，说明 HTTP 启动尚未完成，不能仅凭这两行判断进程已经失败。保持 `APP_LOG_LEVEL=info`，程序会输出 DLL 配置、原生库导入、CUDA 检查、模型文件下载、GPU 模型加载等阶段；等待期间每 15 秒输出一次当前阶段和累计耗时。等待提示不代表文件下载进度，也不会强制中断正在运行的原生操作。
+
+排查时可用以下方式前台启动，将标准输出和错误输出一起保存：
+
+```powershell
+Set-Location D:\services\asr-fast
+.\.venv\Scripts\python.exe -u -X faulthandler run.py 2>&1 | Tee-Object -FilePath startup.log
+```
+
+最后一个 `Startup stage` 可用于定位停顿位置：下载阶段先检查镜像网络和磁盘，CUDA 检查或模型加载阶段检查驱动、DLL 和显存。Python 启动异常会记录失败阶段及堆栈；`run.py` 也启用了 faulthandler，便于捕获部分原生扩展崩溃。排查时请同时保留末尾日志，并确认进程是仍在运行还是已退出。
+
 ```powershell
 curl.exe --fail-with-body http://127.0.0.1:8000/v1/audio/transcriptions `
   -F "file=@D:/audio/test.wav" `
@@ -314,6 +325,7 @@ Start-ScheduledTask -TaskName "AsrFast"
 | `Configured CUDA device unavailable` | 先确认 `nvidia-smi` 可用，再检查驱动、DLL 路径和 `WHISPER_DEVICE_INDEX`；只有一张卡时通常设为 `0` |
 | `no kernel image`、架构或精度相关错误 | 检查是否仍安装了旧版 CTranslate2 或较早的 CUDA 12；确认使用本项目虚拟环境、固定的 CTranslate2 4.6.3 和 `float16` |
 | 首次启动长时间未就绪 | 查看日志确认模型下载进度；检查 HF Mirror 网络连通性、磁盘空间和下载目录写权限；首次下载不要启用离线模式 |
+| 停在 `Waiting for application startup` | 保持 `APP_LOG_LEVEL=info`，查看最后的 `Startup stage` 和每 15 秒的等待提示；使用前台日志命令保存输出，确认进程是否退出 |
 | GPU 显存不足 | 确认没有重复服务进程或其他 GPU 任务，保持并发为 1；仍不足时可改用 `turbo` / `small` 并重启 |
 | 本机可访问，其他机器不可访问 | 检查监听地址、Windows 防火墙、服务器 IP、客户端网段和云安全组 |
 | 返回 `503` | 查看是否已就绪；若为容量不足，可按 `Retry-After` 重试、减少请求数或调整排队等待时间 |

@@ -1,11 +1,14 @@
 """Blocking model operations; callers must dispatch them to a worker thread."""
 
+import logging
 import os
 from pathlib import Path
 from typing import BinaryIO
 
 from app.config import Settings
 from app.schemas import Segment, Transcription, Word
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidAudio(ValueError):
@@ -25,8 +28,14 @@ class WhisperService:
         self.settings = settings
         self.model = None
         self._dll_handles = []
+        self.startup_stage = "not started"
+
+    def _stage(self, name: str) -> None:
+        self.startup_stage = name
+        logger.info("Startup stage: %s", name)
 
     def load(self) -> None:
+        self._stage("configure Windows DLL directories")
         if os.name == "nt":
             directories = [p.strip() for p in self.settings.cuda_dll_dirs.split(";") if p.strip()]
             # Register DLL search directories before importing native libraries.
@@ -35,25 +44,57 @@ class WhisperService:
                 if not path.is_dir():
                     raise RuntimeError(f"CUDA_DLL_DIRS directory does not exist: {path}")
                 self._dll_handles.append(os.add_dll_directory(str(path)))
+                logger.info("Registered DLL directory: %s", path)
             if directories:
                 os.environ["PATH"] = os.pathsep.join(
                     [str(Path(p).expanduser().resolve()) for p in directories]
                     + [os.environ.get("PATH", "")]
                 )
 
+        self._stage("import CTranslate2")
         import ctranslate2
+
+        logger.info("CTranslate2 version: %s", ctranslate2.__version__)
+        self._stage("import faster-whisper")
         from faster_whisper import WhisperModel
+        from faster_whisper.utils import download_model
 
         settings = self.settings
         if settings.whisper_device == "cuda":
-            if ctranslate2.get_cuda_device_count() <= settings.whisper_device_index:
+            self._stage("detect CUDA devices")
+            device_count = ctranslate2.get_cuda_device_count()
+            logger.info("CUDA devices detected: %s; selected index: %s", device_count, settings.whisper_device_index)
+            if device_count <= settings.whisper_device_index:
                 raise RuntimeError("Configured CUDA device unavailable; check NVIDIA driver and DLL paths")
+            self._stage("check CUDA compute types")
             supported = ctranslate2.get_supported_compute_types("cuda", settings.whisper_device_index)
+            logger.info("Supported CUDA compute types: %s", sorted(supported))
             if settings.whisper_compute_type not in {"auto", "default"} | supported:
                 raise RuntimeError(f"Unsupported CUDA compute type; supported types: {sorted(supported)}")
 
+        model_path = settings.whisper_model
+        if Path(model_path).is_dir():
+            logger.info("Using local model directory: %s", Path(model_path).resolve())
+        else:
+            self._stage("resolve/download model files (network or local cache)")
+            logger.info(
+                "Model=%s; HF_ENDPOINT=%s; cache=%s; local_files_only=%s; HF_HUB_OFFLINE=%s",
+                settings.whisper_model,
+                os.environ.get("HF_ENDPOINT"),
+                settings.whisper_download_root.resolve(),
+                settings.whisper_local_files_only,
+                os.environ.get("HF_HUB_OFFLINE", "0"),
+            )
+            model_path = download_model(
+                settings.whisper_model,
+                cache_dir=str(settings.whisper_download_root),
+                local_files_only=settings.whisper_local_files_only,
+            )
+            logger.info("Model files available: %s", model_path)
+
+        self._stage("load model into device memory")
         self.model = WhisperModel(
-            settings.whisper_model,
+            model_path,
             device=settings.whisper_device,
             device_index=settings.whisper_device_index,
             compute_type=settings.whisper_compute_type,
@@ -65,6 +106,7 @@ class WhisperService:
         language = settings.whisper_language.strip() or None
         if language and language not in self.model.supported_languages:
             raise RuntimeError(f"WHISPER_LANGUAGE is unsupported by the configured model: {language}")
+        self._stage("model ready")
 
     def close(self) -> None:
         # Release native model references before unregistering DLL search paths.

@@ -4,6 +4,11 @@ from app.config import get_settings
 
 
 if __name__ == "__main__":
+    import faulthandler
+
+    # Include Python thread stacks when a native extension crashes.
+    faulthandler.enable(all_threads=True)
+
     import uvicorn
 
     settings = get_settings()
