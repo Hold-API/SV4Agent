@@ -11,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.asr import AudioTooLong, InvalidAudio, UnsupportedLanguage, WhisperService
 from app.config import DOTENV_MODELSCOPE_ENDPOINT, ENV_FILE, get_settings
+from app.docs import setup_docs
 from app.logging_config import configure_logging
 from app.schemas import Transcription
 
@@ -64,7 +65,11 @@ async def lifespan(app: FastAPI):
         service.close()
 
 
-app = FastAPI(title="Faster Whisper ASR", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="Faster Whisper ASR", version="0.1.0", lifespan=lifespan,
+    docs_url=None, redoc_url=None,
+)
+setup_docs(app)
 
 
 async def require_api_key(

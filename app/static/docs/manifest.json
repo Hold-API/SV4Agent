@@ -1,0 +1,25 @@
+{
+  "swagger-ui-dist": {
+    "version": "5.30.2",
+    "source": "https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.30.2.tgz",
+    "integrity": "sha512-HWCg1DTNE/Nmapt+0m2EPXFwNKNeKK4PwMjkwveN/zn1cV2Kxi9SURd+m0SpdcSgWEK/O64sf8bzXdtUhigtHA==",
+    "license": "Apache-2.0",
+    "files": {
+      "swagger-ui-bundle.js": "002503ad9e92c33a9c9e2f7d4910a6fba4dd9dd8c57cfdb53b090629df0f5787",
+      "swagger-ui.css": "bc5e8d5c013477cf1f35e2fb8ba1dff66be0f72f24e669a509635657145e1acb",
+      "favicon.png": "3ed612f41e050ca5e7000cad6f1cbe7e7da39f65fca99c02e99e6591056e5837",
+      "swagger-ui.LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "swagger-ui.NOTICE": "0d20d1adef18aee3f40dd258172155521ce702ac445cb5f7b7d60ed32dad2fb2"
+    }
+  },
+  "redoc": {
+    "version": "2.5.2",
+    "source": "https://registry.npmjs.org/redoc/-/redoc-2.5.2.tgz",
+    "integrity": "sha512-sTJfItvRkcDTojB6wdLN4M+Ua6mlZwElV21Tf8Mn7IbQF/1Os6GvgQpZyLWPGZZHbhy7GC1Or1hTMHfz1vKh5A==",
+    "license": "MIT",
+    "files": {
+      "redoc.standalone.js": "6beb5aea23b71d09122ee35de8f326e38aec050e774f3bfba1f34e5c36608986",
+      "redoc.LICENSE": "d3026d549cf68ab7355bcfa85877bf8f845b3334a7efbfdc63936432fb34ff0e"
+    }
+  }
+}
