@@ -7,6 +7,9 @@ pydantic-settings>=2.7.0,<3.0
 python-dotenv>=1.0.1,<2.0
 anyio>=4.8.0,<5.0
 faster-whisper>=1.2.0,<2.0
+# Windows compatibility baseline; 19.0.1 stalled during standalone import on
+# the target server. This pin still needs import/inference validation there.
+av==16.0.1; sys_platform == "win32"
 modelscope==1.40.2
 modelscope-hub==0.4.6
 # 4.6.3 adds CUDA 12.8 support; use recent Windows wheels for RTX 50 series.

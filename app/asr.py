@@ -2,6 +2,7 @@
 
 import logging
 import os
+from importlib.metadata import version
 from pathlib import Path
 from typing import BinaryIO
 
@@ -56,6 +57,11 @@ class WhisperService:
         import ctranslate2
 
         logger.info("CTranslate2 version: %s", ctranslate2.__version__)
+        self._stage("import PyAV (FFmpeg native libraries)")
+        logger.info("Installed PyAV version: %s", version("av"))
+        import av
+
+        logger.info("PyAV import completed: %s", av.__version__)
         self._stage("import faster-whisper")
         from faster_whisper import WhisperModel
 

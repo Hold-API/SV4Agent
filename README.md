@@ -27,6 +27,8 @@ RTX 5070 属于 Blackwell 架构，部署时请明确使用 CUDA **12.8**，不�
 
 本项目使用 CTranslate2 推理，不需要额外安装 PyTorch。通过 wheel 安装的 PyAV 自带 FFmpeg 库，通常无需单独安装 `ffmpeg.exe`，参见 [faster-whisper 官方说明](https://github.com/SYSTRAN/faster-whisper#requirements)。
 
+Windows 依赖固定 `av==16.0.1` 作为兼容性基线，该版本提供 [CPython 3.13 / Windows x64 wheel](https://pypi.org/project/av/16.0.1/#files)。这用于对照排查 PyAV 19.0.1 在目标服务器单独导入也长时间未完成的问题；尚不能仅凭版本回退认定服务器故障已解决。
+
 检查系统环境：
 
 ```powershell
@@ -196,6 +198,20 @@ Set-Location D:\services\asr-fast
 
 最后一个 `Startup stage` 可用于定位停顿位置：下载阶段先检查镜像网络和磁盘，CUDA 检查或模型加载阶段检查驱动、DLL 和显存。Python 启动异常会记录失败阶段及堆栈；`run.py` 也启用了 faulthandler，便于捕获部分原生扩展崩溃。排查时请同时保留末尾日志，并确认进程是仍在运行还是已退出。
 
+### PyAV 原生模块导入停顿
+
+若日志停在 `import PyAV (FFmpeg native libraries)`，且单独 `import av` 也很慢，此时不涉及模型下载或 large-v3 显存占用。先停止服务，在项目根目录重新安装固定版本的二进制包：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --force-reinstall --no-cache-dir --only-binary=:all: "av==16.0.1" --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -u -c "import faulthandler, time; from importlib.metadata import version; print('Installed PyAV:', version('av'), flush=True); faulthandler.dump_traceback_later(30); t=time.perf_counter(); import av; faulthandler.cancel_dump_traceback_later(); print('PyAV import OK:', av.__version__, 'elapsed:', round(time.perf_counter()-t, 2), 'seconds', flush=True)"
+```
+
+确认输出 `Installed PyAV: 16.0.1` 和 `PyAV import OK` 后，再运行 `python run.py` 并验证真实音频转写。如果仍卡住，保留 30 秒后的堆栈，继续检查本机 DLL 加载、磁盘和安全软件行为。主线程单独导入也复现时，不应直接归因于 FastAPI 后台线程。
+
+Windows PowerShell 将 stderr 合并进管道时，可能把正常的 Uvicorn INFO 日志包装成 `NativeCommandError`；应结合后续 Python 异常、进程退出和启动阶段判断是否失败。
+
 ```powershell
 curl.exe --fail-with-body http://127.0.0.1:8000/v1/audio/transcriptions `
   -F "file=@D:/audio/test.wav" `
@@ -360,6 +376,7 @@ Start-ScheduledTask -TaskName "AsrFast"
 | ModelScope 配置似乎未生效 | 查看 `.env` 的实际路径及 `Model download source: ModelScope`；排除 `.env.txt`、只修改 `.env.example`、进程环境变量覆盖和修改后未重启 |
 | 本地模型提示文件不完整 | 确认目录内包含 `model.bin`、`config.json`、`tokenizer.json` 和词表；不要把 Hugging Face 缓存根目录或未下载的 Git LFS 指针当成模型目录 |
 | 停在 `Waiting for application startup` | 保持 `APP_LOG_LEVEL=info`，查看最后的 `Startup stage` 和每 15 秒的等待提示；使用前台日志命令保存输出，确认进程是否退出 |
+| 停在 PyAV 导入，CPU 占用低 | 按上方 PyAV 排查步骤确认固定版本和独立导入表现；等待时输出的堆栈用于定位，不能把十几分钟默认视为正常编译 |
 | GPU 显存不足 | 确认没有重复服务进程或其他 GPU 任务，保持并发为 1；仍不足时可改用 `turbo` / `small` 并重启 |
 | 本机可访问，其他机器不可访问 | 检查监听地址、Windows 防火墙、服务器 IP、客户端网段和云安全组 |
 | 返回 `503` | 查看是否已就绪；若为容量不足，可按 `Retry-After` 重试、减少请求数或调整排队等待时间 |
