@@ -400,6 +400,8 @@ FFMPEG_SLIDESHOW_TIMEOUT_SECONDS=3600
 | `fps` | `24` | 仅 burn：输出帧率 1–60，先补帧再绘制字幕 |
 | `font_size` | `24` | 仅 burn：ASS 字号 8–96，并非严格的输出像素高度 |
 
+`subtitle_mode` 同时支持 **URL 查询参数**和表单字段：`/v1/video/subtitles?subtitle_mode=burn`。两处都填写时 **URL 参数优先**；均未指定时使用 `soft`。查询参数只接受小写 `soft` / `burn`，非法值或空值返回 422，不会静默回退到软字幕。其余选项仍通过 multipart 表单传入。Swagger 的查询参数区域和请求体区域分别展示这两种传法。
+
 **软字幕**默认复制原视频和音频流，仅将 SRT 转为 MP4 的 `mov_text` 轨道；无需视频解码、滤镜或 NVENC 重编码，原视频帧率保留。它仍需要读写视频文件和传输网络数据，并非瞬间完成。播放器需支持 MP4 文本字幕；输出字幕标记为默认，但有些播放器仍需手动开启，视频平台也可能在上传后移除字幕轨道。软字幕不保留复杂 ASS 特效，见 [FFmpeg streamcopy 说明](https://ffmpeg.org/ffmpeg.html#Streamcopy)。
 
 ```powershell
@@ -413,11 +415,12 @@ curl.exe --fail http://127.0.0.1:8000/v1/video/subtitles `
 
 **硬字幕**使用 CPU 解码与 libass 绘制文字，最终通过 NVENC 编码；不需要播放器另行开启字幕。对 `1fps` 的照片视频，默认先补到 `24fps` 再绘制每帧字幕，以免亚秒切换或短句漏显示。若手动降低 burn 模式帧率，字幕切换也会受帧率限制。该方式会增加处理时间，不等同于纯 GPU 转码，且不自动回退到软件视频编码。输出面向 8-bit SDR 视频，未实现 HDR 色调映射。
 
+以下示例通过 URL 选择硬字幕；也可以去掉 URL 查询参数，改传 `-F "subtitle_mode=burn"`。
+
 ```powershell
-curl.exe --fail http://127.0.0.1:8000/v1/video/subtitles `
+curl.exe --fail "http://127.0.0.1:8000/v1/video/subtitles?subtitle_mode=burn" `
   -F "file=@D:/video/slideshow.mp4" `
   -F "subtitles=@D:/video/subtitles.srt" `
-  -F "subtitle_mode=burn" `
   -F "preset=p4" `
   -F "fps=24" `
   -F "font_size=24" `

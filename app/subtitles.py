@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import anyio
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from app.auth import require_api_key
@@ -174,13 +174,13 @@ def subtitle_command(
 @router.post(
     "/v1/video/subtitles", response_class=FileResponse,
     responses={200: {"content": {"video/mp4": {"schema": {"type": "string", "format": "binary"}}}}},
-    description="上传视频和 UTF-8 SRT。soft 添加可开关字幕并复制视频流；burn 烧录字幕并以 NVENC 重新编码。",
+    description="上传视频和 UTF-8 SRT。soft 添加可开关字幕并复制视频流；burn 烧录字幕并以 NVENC 重新编码。subtitle_mode 可通过 URL 查询参数或表单传入，URL 优先；均未指定时为 soft。其余选项通过表单传入。",
 )
 async def add_subtitles(
     request: Request,
     file: Annotated[UploadFile, File(description="视频文件")],
     subtitles: Annotated[UploadFile, File(description="UTF-8 编码的 SRT 字幕文件")],
-    subtitle_mode: Annotated[Literal["soft", "burn"], Form()] = "soft",
+    subtitle_mode: Annotated[Literal["soft", "burn"], Form(description="字幕模式；URL 中的同名参数优先")] = "soft",
     codec: Annotated[Codec, Form(description="仅 burn 模式使用")] = "h264",
     preset: Annotated[Preset, Form(description="仅 burn 模式使用")] = "p4",
     quality: Annotated[int, Form(ge=1, le=51, description="仅 burn 模式使用")] = 23,
@@ -188,7 +188,10 @@ async def add_subtitles(
     font_size: Annotated[int, Form(ge=8, le=96, description="仅 burn 模式使用；ASS 字号")] = 24,
     audio_codec: Annotated[Literal["copy", "aac"], Form()] = "copy",
     subtitle_language: Annotated[str, Form(pattern=r"^[a-z]{3}$", description="soft 模式 ISO 639-2 三字母语言代码")] = "zho",
+    subtitle_mode_query: Annotated[Literal["soft", "burn"] | None, Query(alias="subtitle_mode", description="字幕模式；填写时优先于表单，省略时使用表单值（默认 soft）")] = None,
 ) -> FileResponse:
+    if subtitle_mode_query is not None:
+        subtitle_mode = subtitle_mode_query
     settings = get_settings()
     temporary = None
     transferred = False

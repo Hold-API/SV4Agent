@@ -21,7 +21,7 @@ async def upload(content=b"video data", fields=None, *, headers=(), fail_sending
     )
 
 
-async def post_multipart(path, files, fields=None, *, headers=(), fail_sending=False):
+async def post_multipart(path, files, fields=None, *, headers=(), fail_sending=False, query_string=b""):
     boundary = b"video-test-boundary"
     parts = []
     for field, filename, content in files:
@@ -51,7 +51,7 @@ async def post_multipart(path, files, fields=None, *, headers=(), fail_sending=F
         "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
         "http_version": "1.1", "method": "POST", "scheme": "http",
         "path": path, "raw_path": path.encode(),
-        "query_string": b"", "root_path": "",
+        "query_string": query_string, "root_path": "",
         "headers": [(b"host", b"testserver"),
                     (b"content-type", b"multipart/form-data; boundary=" + boundary), *headers],
         "server": ("testserver", 80), "client": ("127.0.0.1", 12345),

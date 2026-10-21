@@ -161,6 +161,26 @@ class SubtitleRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(str(self.root), filters)
         self.assertEqual(command[command.index("-c:a") + 1], "aac")
 
+    async def test_query_mode_selects_encoding_and_overrides_form(self):
+        for query_mode, form_mode in (("burn", None), ("soft", None), ("burn", "soft"), ("soft", "burn"), ("burn", "burn")):
+            with self.subTest(query_mode=query_mode, form_mode=form_mode):
+                fields = {"subtitle_mode": form_mode} if form_mode is not None else None
+                status, _, _ = await self.upload(fields=fields, query_string=f"subtitle_mode={query_mode}".encode())
+                self.assertEqual(status, 200)
+                command = self.commands[-1]
+                self.assertEqual(command[command.index("-c:v") + 1], "h264_nvenc" if query_mode == "burn" else "copy")
+                self.assertEqual("-vf" in command, query_mode == "burn")
+                self.assertEqual("-c:s" in command, query_mode == "soft")
+
+    async def test_invalid_query_mode_rejected_before_processing(self):
+        for query_string in (b"subtitle_mode=other", b"subtitle_mode=", b"subtitle_mode=BURN"):
+            with self.subTest(query_string=query_string):
+                self.assertEqual((await self.upload(query_string=query_string))[0], 422)
+        self.process.assert_not_awaited()
+        self.probe.assert_not_awaited()
+        self.assertEqual(list(self.root.iterdir()), [])
+        self.assertEqual(app.state.video_slots.value, 1)
+
     async def test_invalid_options_or_srt_do_not_start_processing(self):
         for fields in ({"subtitle_mode": "other"}, {"fps": 0}, {"font_size": 200}, {"subtitle_language": "zh;cmd"}):
             self.assertEqual((await self.upload(fields=fields))[0], 422)
@@ -246,6 +266,9 @@ class SubtitleRouteTests(unittest.IsolatedAsyncioTestCase):
         schema = json.loads(body)
         operation = schema["paths"]["/v1/video/subtitles"]["post"]
         self.assertIn("video/mp4", operation["responses"]["200"]["content"])
+        query_mode = next(p for p in operation["parameters"] if p["name"] == "subtitle_mode" and p["in"] == "query")
+        self.assertFalse(query_mode.get("required", False))
+        self.assertIn({"enum": ["soft", "burn"], "type": "string"}, query_mode["schema"]["anyOf"])
         ref = operation["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
         model = schema["components"]["schemas"][ref.rsplit("/", 1)[1]]
         self.assertEqual(model["properties"]["subtitle_mode"]["default"], "soft")
