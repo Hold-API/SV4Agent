@@ -7,6 +7,7 @@
 - 提供音频上传、语言检测、分段时间戳、可选词级时间戳和英文翻译。
 - 支持 Bearer API Key、单文件大小限制、音频时长限制和推理并发控制。
 - 提供 FFmpeg GPU 视频转码接口：CUDA 解码/缩放、NVENC H.264/H.265 编码，返回 MP4。
+- 支持上传图片时间线和音频，直接用 NVENC 生成照片视频，无需本地先编码。
 
 以下命令均使用 **PowerShell**，示例部署路径统一为 `D:\services\asr-fast`。如果服务器路径不同，请同步替换命令中的路径。
 
@@ -305,6 +306,79 @@ curl.exe --fail http://127.0.0.1:8000/v1/video/transcode `
 当前输出为 8-bit YUV 4:2:0，面向 SDR 视频；未实现 HDR 到 SDR 色调映射。不支持硬件解码的输入、缺少 CUDA/NVENC 功能的构建或不可用的 GPU 会报错，不自动切到软件编码。HTTP 422 表示输入或转码失败，查看服务器 FFmpeg 错误日志区分；503 表示功能关闭、程序无法启动或队列已满；504 表示转码超时。缺少必填文件或参数不合法也返回 422。
 
 部署验收应上传一段带音轨的视频及一段无音轨视频，检查输出可播放、音画同步、分辨率和编码正确，并观察 GPU Video Encode / Decode。仓库自动化测试覆盖接口、参数、子进程超时和清理；本地开发环境未验证 Windows/5070 实际硬件转码速度。
+
+### 图片时间线 + 音频直接生成视频
+
+`POST /v1/video/slideshow` 接收多张图片、一段音频和一个 `concat.txt`，成功直接返回 MP4。它将“本地 libx264 先编码 → 上传 raw MP4 → GPU 再编码”合并为一次服务端制作：图片只预处理一次，按时间线切换，最终使用 NVENC 编码。照片预处理使用 CPU，长视频编码使用 GPU；不需要在客户端安装 FFmpeg，也不新增 Python 依赖。
+
+| 表单字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `images` | 必填，可重复 | JPG/JPEG、PNG 或 WebP 图片，按文件名匹配时间线；大小写不敏感 |
+| `audio` | 必填 | 录音或配音；默认适合 AAC 编码的 `.m4a` |
+| `timeline` | 必填 | UTF-8（允许 BOM）的 `concat.txt`，最大 256 KiB |
+| `codec` | `h264` | `h264` 或 `hevc` |
+| `preset` | `p7` | `p1`–`p7`；较快编码可先试 `p4` |
+| `quality` | `23` | NVENC CQ 质量值，1–51；不是 libx264 的 CRF |
+| `width` / `height` | `1920` / `1080` | 偶数画布尺寸；每边 144–3840，总像素不超过 3840×2160 |
+| `fps` | `24` | 输出帧率，1–60 |
+| `audio_codec` | `copy` | `copy` 无损复制音轨，需兼容 MP4；设为 `aac` 可转换其他音频格式 |
+
+时间线严格按文件顺序执行，`duration` 单位是秒，必须为有限正数且不少于一帧。图片等比例适配画布并补黑边，不拉伸；动画图片只取第一帧。时间线只接受 `file`、`duration`、可选的 `ffconcat version 1.0` 首部及注释，不接受任意 FFmpeg 指令。
+
+例如 `concat.txt`：
+
+```text
+ffconcat version 1.0
+file 'C:\photos\first.jpg'
+duration 5.000
+file 'C:\photos\second.jpg'
+duration 8.000
+```
+
+上传 `first.jpg`、`second.jpg` 和音频后，第一张从 0 秒显示至 5 秒，第二张继续至 13 秒。**Windows 路径仅用于提取图片文件名，不会读取服务器上的同名路径**；无需将客户端目录复制到服务器。不同目录中的同名图片需要先重命名。缺失图片、重复文件名、上传了时间线未引用的图片、缺少时长都会报错，不会跳过某段。
+
+服务会重新生成只引用本次上传图片的 concat 清单，并重复最后一张作为结束时间戳，保证最后一段按指定时长显示，无需手动追加重复行。也兼容客户端已追加最后一张、无 `duration` 的标准结束行。成片在**音频结束和时间线结束中较早的位置**停止，按帧对齐；音频较短时不会补静音，较长时会截断。行为依据见 [FFmpeg concat demuxer](https://ffmpeg.org/ffmpeg-formats.html#concat-1) 和 [shortest 选项](https://ffmpeg.org/ffmpeg.html#Advanced-options)。
+
+上传一个短示例：
+
+```powershell
+curl.exe --fail http://10.234.10.20:8000/v1/video/slideshow `
+  -F "timeline=@D:/photos/concat.txt" `
+  -F "images=@D:/photos/first.jpg" `
+  -F "images=@D:/photos/second.jpg" `
+  -F "audio=@D:/audio/recording.m4a" `
+  -F "audio_codec=copy" `
+  -o D:/video/slideshow.mp4
+```
+
+启用鉴权时，增加 `-H "Authorization: Bearer YOUR_API_KEY"`。可在 `/docs` 的 `video` 分组选择多张图片并上传时间线、音频；这是同步请求，连接需要持续到编码完成，不是后台任务或任务轮询接口。
+
+#### 使用 2026-10-12 的 14 张照片和录音
+
+已保存完整时间线到 [`examples/concat_20261012.txt`](examples/concat_20261012.txt)，首张为 `IMG_20261012_084558.jpg`，14 段共 **5164 秒（86 分 4 秒）**。调整下方客户端素材路径，运行 PowerShell 辅助脚本即可上传全部引用的图片：
+
+```powershell
+Set-Location D:\services\asr-fast
+.\examples\create_slideshow.ps1 `
+  -PhotoDirectory "C:\path\to\photos_1012" `
+  -AudioPath "C:\path\to\20261012_082607.m4a" `
+  -ServerUrl "http://10.234.10.20:8000" `
+  -OutputPath ".\20261012_082607.mp4"
+```
+
+脚本从时间线提取图片文件名，从 `PhotoDirectory` 找到实际文件，因此示例 concat 里的占位目录可以保留。自定义时间线通过 `-TimelinePath` 指定；脚本要求 `file` 路径使用示例中的单引号格式。启用鉴权时增加 `-ApiKey "YOUR_API_KEY"`。如本机 PowerShell 策略不允许执行脚本，可用上方 `curl.exe` 方式按 `images` 字段逐张上传。音频不是 MP4 支持的编码时，在 `/docs` 或直接请求中选择 `audio_codec=aac`。
+
+在实际 `.env` 添加并重启：
+
+```dotenv
+FFMPEG_SLIDESHOW_MAX_IMAGES=100
+FFMPEG_SLIDESHOW_MAX_DURATION_SECONDS=86400
+FFMPEG_SLIDESHOW_TIMEOUT_SECONDS=3600
+```
+
+`FFMPEG_MAX_UPLOAD_MB` 控制图片、音频和时间线的**合计上传大小**；`FFMPEG_MAX_OUTPUT_MB` 仍限制 MP4 输出大小。图片合成与 `/v1/video/transcode` 共用 `FFMPEG_MAX_CONCURRENT_REQUESTS` 队列。`FFMPEG_SLIDESHOW_TIMEOUT_SECONDS` 是所有图片预处理和最终编码的整体执行时限，不含上传、排队和下载，与普通转码的 `FFMPEG_TIMEOUT_SECONDS` 分开。超过时限返回 504 并结束子进程，输入/输出超限返回 413，失败或响应发送完成后清理临时文件。长视频使用反向代理时也需要调大等待时限；客户端请勿设置比编码时间更短的超时。
+
+直接从原始图片制作可避免低画质中间视频造成的二次有损压缩。把 CRF 35 的视频重新编码为 CQ 23 并不能恢复已丢失的细节；`p7` 也不保证固定的体积或速度。请先制作短片验证画面、音轨、切换时刻和时长，再处理完整录音。当前自动化测试不等于已完成 Windows/5070 硬件编码或 86 分钟素材的实际部署验收。
 
 ## 5. 后台部署与开机启动
 

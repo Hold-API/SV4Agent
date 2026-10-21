@@ -23,8 +23,8 @@ Preset = Literal["p1", "p2", "p3", "p4", "p5", "p6", "p7"]
 class TemporaryVideoResponse(FileResponse):
     """Keep the output alive while sending; also clean up if sending fails."""
 
-    def __init__(self, path: Path, temporary: tempfile.TemporaryDirectory):
-        super().__init__(path, media_type="video/mp4", filename="transcoded.mp4")
+    def __init__(self, path: Path, temporary: tempfile.TemporaryDirectory, *, filename="transcoded.mp4"):
+        super().__init__(path, media_type="video/mp4", filename=filename)
         self.temporary = temporary
 
     async def __call__(self, scope, receive, send):
@@ -35,20 +35,40 @@ class TemporaryVideoResponse(FileResponse):
                 await anyio.to_thread.run_sync(self.temporary.cleanup)
 
 
-def build_command(
-    settings: Settings, source: Path, target: Path, *, codec: Codec,
-    preset: Preset, quality: int, height: int | None,
-) -> list[str]:
+def ffmpeg_executable(settings: Settings) -> str:
     executable = settings.ffmpeg_path
     # Bare names use PATH; relative executable paths use the project root.
     if not Path(executable).is_absolute() and ("/" in executable or "\\" in executable):
         executable = str(PROJECT_ROOT / executable)
+    return executable
+
+
+def create_video_directory(settings: Settings) -> tempfile.TemporaryDirectory:
+    parent = settings.ffmpeg_temp_dir
+    if parent is not None:
+        if not parent.is_absolute():
+            parent = PROJECT_ROOT / parent
+        parent.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix="asr-fast-video-", dir=parent)
+
+
+def validate_video_output(target: Path, settings: Settings) -> None:
+    if not target.is_file() or not target.stat().st_size:
+        raise HTTPException(422, "FFmpeg produced no video")
+    if target.stat().st_size >= settings.ffmpeg_max_output_mb * 1024 * 1024:
+        raise HTTPException(413, "Video output reached FFMPEG_MAX_OUTPUT_MB; output discarded")
+
+
+def build_command(
+    settings: Settings, source: Path, target: Path, *, codec: Codec,
+    preset: Preset, quality: int, height: int | None,
+) -> list[str]:
     # Decode, convert to 8-bit 4:2:0 and optionally scale on the selected GPU.
     scale = "scale_cuda=format=yuv420p"
     if height is not None:
         scale = f"scale_cuda=w=-2:h={height}:format=yuv420p"
     return [
-        executable, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        ffmpeg_executable(settings), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
         # Only self-contained media containers; deny network/playlist inputs.
         "-protocol_whitelist", "file,pipe",
         "-format_whitelist", "mov,matroska,webm,avi,mpegts,mpeg,flv,ogg",
@@ -123,12 +143,7 @@ async def transcode_video(
         except TimeoutError:
             raise HTTPException(503, "Video capacity exhausted; retry later", headers={"Retry-After": "5"}) from None
 
-        parent = settings.ffmpeg_temp_dir
-        if parent is not None:
-            if not parent.is_absolute():
-                parent = PROJECT_ROOT / parent
-            parent.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(prefix="asr-fast-video-", dir=parent)
+        temporary = create_video_directory(settings)
         source, target = Path(temporary.name) / "input.video", Path(temporary.name) / "output.mp4"
         size = 0
         async with await anyio.open_file(source, "wb") as output:
@@ -147,10 +162,7 @@ async def transcode_video(
         await run_ffmpeg(build_command(
             settings, source, target, codec=codec, preset=preset, quality=quality, height=height,
         ), settings)
-        if not target.is_file() or not target.stat().st_size:
-            raise HTTPException(422, "FFmpeg produced no video")
-        if target.stat().st_size >= settings.ffmpeg_max_output_mb * 1024 * 1024:
-            raise HTTPException(413, "Video output reached FFMPEG_MAX_OUTPUT_MB; output discarded")
+        validate_video_output(target, settings)
         logger.info("Video transcode complete: codec=%s; elapsed=%.1fs", codec, time.monotonic() - started)
         response = TemporaryVideoResponse(target, temporary)
         transferred = True

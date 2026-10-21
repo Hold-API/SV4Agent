@@ -15,11 +15,20 @@ from app.video import run_ffmpeg
 
 
 async def upload(content=b"video data", fields=None, *, headers=(), fail_sending=False):
+    return await post_multipart(
+        "/v1/video/transcode", [("file", "input.mp4", content)], fields,
+        headers=headers, fail_sending=fail_sending,
+    )
+
+
+async def post_multipart(path, files, fields=None, *, headers=(), fail_sending=False):
     boundary = b"video-test-boundary"
-    parts = [
-        b"--" + boundary + b'\r\nContent-Disposition: form-data; name="file"; filename="input.mp4"'
-        b"\r\nContent-Type: video/mp4\r\n\r\n" + content + b"\r\n",
-    ]
+    parts = []
+    for field, filename, content in files:
+        parts.append(
+            b"--" + boundary + f'\r\nContent-Disposition: form-data; name="{field}"; filename="{filename}"'.encode()
+            + b"\r\nContent-Type: application/octet-stream\r\n\r\n" + content + b"\r\n",
+        )
     for name, value in (fields or {}).items():
         parts.append(b"--" + boundary + f'\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     body = b"".join(parts) + b"--" + boundary + b"--\r\n"
@@ -41,7 +50,7 @@ async def upload(content=b"video data", fields=None, *, headers=(), fail_sending
     await app({
         "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
         "http_version": "1.1", "method": "POST", "scheme": "http",
-        "path": "/v1/video/transcode", "raw_path": b"/v1/video/transcode",
+        "path": path, "raw_path": path.encode(),
         "query_string": b"", "root_path": "",
         "headers": [(b"host", b"testserver"),
                     (b"content-type", b"multipart/form-data; boundary=" + boundary), *headers],

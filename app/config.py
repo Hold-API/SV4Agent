@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     ffmpeg_max_concurrent_requests: int = Field(default=1, ge=1, le=8)
     ffmpeg_queue_timeout_seconds: float = Field(default=30, gt=0)
     ffmpeg_temp_dir: Path | None = None
+    ffmpeg_slideshow_max_images: int = Field(default=100, ge=1, le=500)
+    ffmpeg_slideshow_max_duration_seconds: float = Field(default=86400, gt=0, allow_inf_nan=False)
+    ffmpeg_slideshow_timeout_seconds: float = Field(default=3600, gt=0)
 
     modelscope_endpoint: str = Field(default="https://modelscope.cn", min_length=1)
     modelscope_api_token: SecretStr = SecretStr("")
