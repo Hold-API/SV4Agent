@@ -11,6 +11,7 @@ Use one service to transcribe audio, transcode video on an NVIDIA GPU, and turn 
 - **Speech recognition**: uses `Systran/faster-whisper-large-v3` by default, with automatic language detection, segment timestamps, optional word timestamps, and speech translation into English.
 - **GPU video transcoding**: CUDA decoding and scaling, NVENC H.264 / H.265 encoding, configurable quality, and output resolution.
 - **Photo slideshows**: upload photos, audio, and an `ffconcat` timeline to create an MP4 directly. Photos are fitted to a consistent canvas with black padding, and NVENC handles final video encoding.
+- **Video subtitles**: upload an existing video and SRT captions to mux a selectable subtitle track quickly, or burn captions with NVENC video encoding.
 - **Service controls**: optional Bearer authentication, upload and output limits, separate ASR and video queues, video execution timeouts, and temporary file cleanup.
 - **Self-hosted API documentation**: Swagger UI and ReDoc assets are bundled with the service, so browsers do not need access to an external CDN.
 
@@ -22,10 +23,11 @@ Use one service to transcribe audio, transcode video on an NVIDIA GPU, and turn 
 | `POST` | `/v1/audio/transcriptions` | Transcribe speech or translate it into English | JSON with text, language, and timestamps |
 | `POST` | `/v1/video/transcode` | GPU video transcoding and resizing | MP4 file |
 | `POST` | `/v1/video/slideshow` | Combine a photo timeline with audio | MP4 file |
+| `POST` | `/v1/video/subtitles` | Add an SRT subtitle track or burn captions | MP4 file |
 | `GET` | `/docs` | Interactive Swagger UI | HTML |
 | `GET` | `/redoc` | ReDoc API documentation | HTML |
 
-All three processing endpoints accept `multipart/form-data`. When `APP_API_KEY` is configured, send `Authorization: Bearer YOUR_API_KEY`. Health and documentation endpoints do not require authentication.
+Processing endpoints accept `multipart/form-data`. When `APP_API_KEY` is configured, send `Authorization: Bearer YOUR_API_KEY`. Health and documentation endpoints do not require authentication.
 
 ## Examples
 
@@ -73,6 +75,18 @@ duration 8.000
 ```
 
 `fps=1` suits these static photos with transitions on whole seconds; the endpoint defaults to 24 fps. Photos are matched by filename. The service adds the final timestamp needed to preserve the last photo's duration. Output ends when either the audio or the timeline ends, whichever comes first. Audio is copied by default; add `audio_codec=aac` for audio that needs conversion to an MP4-compatible codec. See the [deployment guide](start.md) and [examples](examples) for all parameters and the upload script.
+
+Add a selectable subtitle track to an existing MP4, copying video and audio streams by default:
+
+```powershell
+curl.exe --fail http://127.0.0.1:8000/v1/video/subtitles `
+  -F "file=@D:/video/slideshow.mp4" `
+  -F "subtitles=@D:/video/subtitles.srt" `
+  -F "subtitle_mode=soft" `
+  -o D:/video/subtitled.mp4
+```
+
+Use `subtitle_mode=burn` to render captions into the video and re-encode it. Burn mode duplicates frames to 24 fps by default before drawing captions. See [examples/subtitles.srt](examples/subtitles.srt) for a sample, and the [deployment guide](start.md) for font, timeout, and playback details.
 
 ## Installation and deployment
 

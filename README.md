@@ -11,6 +11,7 @@ SV4Agent 是一个基于 **FastAPI、faster-whisper 和 FFmpeg** 的语音与视
 - **语音转写**：默认使用 `Systran/faster-whisper-large-v3`，支持自动语言检测、分段时间戳、可选词级时间戳，以及语音翻译为英文。
 - **GPU 视频转码**：使用 NVIDIA CUDA 解码和缩放、NVENC 编码，支持 H.264 / H.265、画质设置和分辨率调整。
 - **照片视频制作**：上传图片、音频和 `ffconcat` 时间线，按指定停留时间直接生成 MP4。图片统一尺寸、等比例补黑边，最终由 NVENC 编码。
+- **视频字幕**：上传已有视频和 SRT，快速封装可开关的软字幕，或使用 NVENC 编码烧录硬字幕。
 - **服务控制**：支持 Bearer API Key、上传和输出限制、独立的 ASR 与视频队列、视频任务执行超时及临时文件清理。
 - **本地接口文档**：Swagger UI 和 ReDoc 的静态资源随项目提供，浏览器无需访问外部 CDN。
 
@@ -22,10 +23,11 @@ SV4Agent 是一个基于 **FastAPI、faster-whisper 和 FFmpeg** 的语音与视
 | `POST` | `/v1/audio/transcriptions` | 音频转写或翻译为英文 | 文本、语言、时间戳 JSON |
 | `POST` | `/v1/video/transcode` | GPU 视频转码与缩放 | MP4 文件 |
 | `POST` | `/v1/video/slideshow` | 图片时间线与音频合成视频 | MP4 文件 |
+| `POST` | `/v1/video/subtitles` | 添加 SRT 软字幕或烧录硬字幕 | MP4 文件 |
 | `GET` | `/docs` | Swagger UI 交互文档 | HTML |
 | `GET` | `/redoc` | ReDoc 接口文档 | HTML |
 
-三个处理接口均使用 `multipart/form-data`。设置 `APP_API_KEY` 后，调用需携带 `Authorization: Bearer YOUR_API_KEY`；健康检查与文档页面无需鉴权。
+处理接口均使用 `multipart/form-data`。设置 `APP_API_KEY` 后，调用需携带 `Authorization: Bearer YOUR_API_KEY`；健康检查与文档页面无需鉴权。
 
 ## 使用示例
 
@@ -73,6 +75,18 @@ duration 8.000
 ```
 
 `fps=1` 适合本例按整数秒切换的静态照片；接口默认是 24 fps。图片按文件名匹配，服务会补齐末张图片的结束时间戳。成片在音频或时间线较早结束的位置停止。音频默认直接复制，非 MP4 兼容编码可增加 `audio_codec=aac`。完整参数及批量上传脚本见 [部署指南](start.md) 和 [examples](examples)。
+
+给已有 MP4 添加可开关的软字幕，默认复制原音视频流：
+
+```powershell
+curl.exe --fail http://127.0.0.1:8000/v1/video/subtitles `
+  -F "file=@D:/video/slideshow.mp4" `
+  -F "subtitles=@D:/video/subtitles.srt" `
+  -F "subtitle_mode=soft" `
+  -o D:/video/subtitled.mp4
+```
+
+改为 `subtitle_mode=burn` 可烧录字幕，视频会重新编码；默认先补到 24 fps 再渲染字幕。示例 SRT 见 [examples/subtitles.srt](examples/subtitles.srt)，字体、时限与播放器说明见 [部署指南](start.md)。
 
 ## 安装与部署
 

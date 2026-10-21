@@ -10,6 +10,7 @@
 - 支持 Bearer API Key、单文件大小限制、音频时长限制和推理并发控制。
 - 提供 FFmpeg GPU 视频转码接口：CUDA 解码/缩放、NVENC H.264/H.265 编码，返回 MP4。
 - 支持上传图片时间线和音频，直接用 NVENC 生成照片视频，无需本地先编码。
+- 支持给已有视频添加 SRT 软字幕或烧录硬字幕。
 
 以下命令均使用 **PowerShell**，示例部署路径统一为 `D:\services\SV4Agent`。如果服务器路径不同，请同步替换命令中的路径；既有部署可以保留原来的项目目录。
 
@@ -381,6 +382,76 @@ FFMPEG_SLIDESHOW_TIMEOUT_SECONDS=3600
 `FFMPEG_MAX_UPLOAD_MB` 控制图片、音频和时间线的**合计上传大小**；`FFMPEG_MAX_OUTPUT_MB` 仍限制 MP4 输出大小。图片合成与 `/v1/video/transcode` 共用 `FFMPEG_MAX_CONCURRENT_REQUESTS` 队列。`FFMPEG_SLIDESHOW_TIMEOUT_SECONDS` 是所有图片预处理和最终编码的整体执行时限，不含上传、排队和下载，与普通转码的 `FFMPEG_TIMEOUT_SECONDS` 分开。超过时限返回 504 并结束子进程，输入/输出超限返回 413，失败或响应发送完成后清理临时文件。长视频使用反向代理时也需要调大等待时限；客户端请勿设置比编码时间更短的超时。
 
 直接从原始图片制作可避免低画质中间视频造成的二次有损压缩。把 CRF 35 的视频重新编码为 CQ 23 并不能恢复已丢失的细节；`p7` 也不保证固定的体积或速度。请先制作短片验证画面、音轨、切换时刻和时长，再处理完整录音。当前自动化测试不等于已完成 Windows/5070 硬件编码或 86 分钟素材的实际部署验收。
+
+### 给已有视频添加字幕
+
+`POST /v1/video/subtitles` 上传视频和 **UTF-8 编码的 SRT**，返回带字幕的 MP4。该接口独立于图片合成，适合给已生成的照片视频补字幕。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `file` | 必填 | 自包含视频文件，支持与转码接口相同的常见容器 |
+| `subtitles` | 必填 | UTF-8 SRT，支持 BOM、CRLF、单行或多行文本；时间戳精确到毫秒 |
+| `subtitle_mode` | `soft` | `soft` 添加可开关的字幕轨；`burn` 将字幕烧进画面 |
+| `audio_codec` | `copy` | 复制首条音轨；若原音频不兼容 MP4，可改为 `aac` |
+| `subtitle_language` | `zho` | soft 模式的三字母语言代码，如 `zho` / `eng` |
+| `codec` | `h264` | 仅 burn：`h264` / `hevc` NVENC 编码 |
+| `preset` | `p4` | 仅 burn：编码预设 `p1`–`p7` |
+| `quality` | `23` | 仅 burn：NVENC CQ 质量值 1–51 |
+| `fps` | `24` | 仅 burn：输出帧率 1–60，先补帧再绘制字幕 |
+| `font_size` | `24` | 仅 burn：ASS 字号 8–96，并非严格的输出像素高度 |
+
+**软字幕**默认复制原视频和音频流，仅将 SRT 转为 MP4 的 `mov_text` 轨道；无需视频解码、滤镜或 NVENC 重编码，原视频帧率保留。它仍需要读写视频文件和传输网络数据，并非瞬间完成。播放器需支持 MP4 文本字幕；输出字幕标记为默认，但有些播放器仍需手动开启，视频平台也可能在上传后移除字幕轨道。软字幕不保留复杂 ASS 特效，见 [FFmpeg streamcopy 说明](https://ffmpeg.org/ffmpeg.html#Streamcopy)。
+
+```powershell
+curl.exe --fail http://127.0.0.1:8000/v1/video/subtitles `
+  -F "file=@D:/video/slideshow.mp4" `
+  -F "subtitles=@D:/video/subtitles.srt" `
+  -F "subtitle_mode=soft" `
+  -F "subtitle_language=zho" `
+  -o D:/video/subtitled-soft.mp4
+```
+
+**硬字幕**使用 CPU 解码与 libass 绘制文字，最终通过 NVENC 编码；不需要播放器另行开启字幕。对 `1fps` 的照片视频，默认先补到 `24fps` 再绘制每帧字幕，以免亚秒切换或短句漏显示。若手动降低 burn 模式帧率，字幕切换也会受帧率限制。该方式会增加处理时间，不等同于纯 GPU 转码，且不自动回退到软件视频编码。输出面向 8-bit SDR 视频，未实现 HDR 色调映射。
+
+```powershell
+curl.exe --fail http://127.0.0.1:8000/v1/video/subtitles `
+  -F "file=@D:/video/slideshow.mp4" `
+  -F "subtitles=@D:/video/subtitles.srt" `
+  -F "subtitle_mode=burn" `
+  -F "preset=p4" `
+  -F "fps=24" `
+  -F "font_size=24" `
+  -o D:/video/subtitled-burn.mp4
+```
+
+两种模式都保留首条视频和首条可选音轨，旧的软字幕、附加音轨和数据轨道不输出。字幕不足视频长度时，不会提前截断视频；超过视频长度的字幕会裁剪，完全位于视频之外的字幕返回 422。接口优先读取视频流时长；容器没有提供该时长时使用容器总时长。原音视频时间戳可能存在按帧/音频包边界的误差，不保证毫秒级完全一致。
+
+SRT 格式示例见 [`examples/subtitles.srt`](examples/subtitles.srt)。字幕段需按开始时间排序，结束时间必须大于开始时间；可以有重叠字幕。ASS/VTT 文件、缺失时间戳、空文本和非 UTF-8 编码均返回 422，空文件返回 400。接口不执行自动语音识别；可先用 ASR 接口获得分段时间戳，再转换为 SRT。
+
+#### Windows 依赖与配置
+
+加字幕时需要 **`ffprobe.exe`** 检查视频时长；它通常与 `ffmpeg.exe` 一起位于完整安装包的 `bin` 目录。检查：
+
+```powershell
+& "D:\tools\ffmpeg\bin\ffprobe.exe" -version
+# 硬字幕另需 subtitles/libass 滤镜及可显示中文的字体。
+& "D:\tools\ffmpeg\bin\ffmpeg.exe" -hide_banner -filters | Select-String "subtitles"
+```
+
+在实际 `.env` 补充配置后重启：
+
+```dotenv
+# 可留空：默认从 FFMPEG_PATH 同目录或 PATH 查找 ffprobe。
+FFPROBE_PATH=
+FFPROBE_TIMEOUT_SECONDS=30
+FFMPEG_SUBTITLE_MAX_UPLOAD_KB=1024
+FFMPEG_SUBTITLE_TIMEOUT_SECONDS=3600
+FFMPEG_SUBTITLE_FONT_NAME=Microsoft YaHei
+```
+
+硬字幕默认白字、描边、底部居中。运行账户需能访问配置的字体；Windows Server 若未安装微软雅黑，可安装有中文字符的字体，并把 `FFMPEG_SUBTITLE_FONT_NAME` 改为对应字体族名，例如 `Noto Sans CJK SC`。字体配置仅供硬字幕使用，不能控制播放器的软字幕外观。硬字幕依赖 `subtitles` / libass，参见 [FFmpeg 字幕滤镜](https://ffmpeg.org/ffmpeg-filters.html#subtitles)。
+
+字幕文件默认上限 1024 KiB；视频和字幕合计大小仍受 `FFMPEG_MAX_UPLOAD_MB` 限制，输出受 `FFMPEG_MAX_OUTPUT_MB` 限制。此接口与转码、图片合成共用视频队列；`FFMPEG_SUBTITLE_TIMEOUT_SECONDS` 为探测及处理的整体时限，`FFPROBE_TIMEOUT_SECONDS` 另限制探测阶段。失败、超时或响应完成后清理临时文件。HTTP 503 包括缺少 FFmpeg/FFprobe、功能关闭、队列满；422 包括字幕/视频错误、MP4 不支持原编码或缺少字幕滤镜；504 表示超时。
 
 ## 5. 后台部署与开机启动
 

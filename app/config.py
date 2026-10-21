@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     ffmpeg_slideshow_max_images: int = Field(default=100, ge=1, le=500)
     ffmpeg_slideshow_max_duration_seconds: float = Field(default=86400, gt=0, allow_inf_nan=False)
     ffmpeg_slideshow_timeout_seconds: float = Field(default=3600, gt=0)
+    ffprobe_path: str = ""
+    ffprobe_timeout_seconds: float = Field(default=30, gt=0)
+    ffmpeg_subtitle_max_upload_kb: int = Field(default=1024, ge=1)
+    ffmpeg_subtitle_timeout_seconds: float = Field(default=3600, gt=0)
+    ffmpeg_subtitle_font_name: str = Field(default="Microsoft YaHei", pattern=r"^[\w .-]{1,80}$")
 
     modelscope_endpoint: str = Field(default="https://modelscope.cn", min_length=1)
     modelscope_api_token: SecretStr = SecretStr("")

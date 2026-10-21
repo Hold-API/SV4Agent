@@ -85,14 +85,14 @@ def build_command(
     ]
 
 
-async def run_ffmpeg(command: list[str], settings: Settings) -> None:
+async def run_ffmpeg(command: list[str], settings: Settings, *, cwd: Path | None = None) -> None:
     # Store diagnostics on disk rather than accumulating unbounded stderr in RAM.
     with tempfile.TemporaryFile() as errors:
         try:
             with anyio.fail_after(settings.ffmpeg_timeout_seconds):
                 result = await anyio.run_process(
                     command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=errors, check=False,
+                    stderr=errors, check=False, cwd=cwd,
                 )
         except TimeoutError:
             # anyio.run_process kills and reaps the child on cancellation.
@@ -106,7 +106,7 @@ async def run_ffmpeg(command: list[str], settings: Settings) -> None:
             errors.seek(max(0, errors.tell() - 6000))
             logger.error("FFmpeg exited with %s: %s", result.returncode, errors.read().decode(errors="replace"))
             raise HTTPException(
-                422, "Video transcode failed; check input, NVIDIA driver, FFmpeg CUDA/NVENC support and server logs",
+                422, "FFmpeg processing failed; check server logs for input codec, filter, font or hardware errors",
             )
 
 

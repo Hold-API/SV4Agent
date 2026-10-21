@@ -14,6 +14,7 @@ from app.docs import setup_docs
 from app.logging_config import configure_logging
 from app.schemas import Transcription
 from app.slideshow import router as slideshow_router
+from app.subtitles import router as subtitles_router
 from app.video import router as video_router
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ app = FastAPI(
 setup_docs(app)
 app.include_router(video_router)
 app.include_router(slideshow_router)
+app.include_router(subtitles_router)
 
 
 @app.get("/health", tags=["health"])
