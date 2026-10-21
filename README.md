@@ -6,6 +6,7 @@
 - Python 依赖使用清华 PyPI 镜像，模型通过 ModelScope 下载。
 - 提供音频上传、语言检测、分段时间戳、可选词级时间戳和英文翻译。
 - 支持 Bearer API Key、单文件大小限制、音频时长限制和推理并发控制。
+- 提供 FFmpeg GPU 视频转码接口：CUDA 解码/缩放、NVENC H.264/H.265 编码，返回 MP4。
 
 以下命令均使用 **PowerShell**，示例部署路径统一为 `D:\services\asr-fast`。如果服务器路径不同，请同步替换命令中的路径。
 
@@ -25,7 +26,7 @@
 
 RTX 5070 属于 Blackwell 架构，部署时请明确使用 CUDA **12.8**，不要只确认安装了“CUDA 12”。项目固定 `ctranslate2==4.6.3`，该版本加入了 CUDA 12.8 支持。版本依据见 [CTranslate2 4.6.3 发布说明](https://github.com/OpenNMT/CTranslate2/releases/tag/v4.6.3)；cuDNN 与 Blackwell 的组合见 [NVIDIA cuDNN 9.8 支持矩阵](https://docs.nvidia.com/deeplearning/cudnn/backend/v9.8.0/reference/support-matrix.html)。这是部署目标配置，仍需在实际服务器完成启动和音频转写验证。
 
-本项目使用 CTranslate2 推理，不需要额外安装 PyTorch。通过 wheel 安装的 PyAV 自带 FFmpeg 库，通常无需单独安装 `ffmpeg.exe`，参见 [faster-whisper 官方说明](https://github.com/SYSTRAN/faster-whisper#requirements)。
+本项目使用 CTranslate2 推理，不需要额外安装 PyTorch。音频转写使用的 PyAV wheel 自带 FFmpeg 库，无需单独安装 `ffmpeg.exe`，参见 [faster-whisper 官方说明](https://github.com/SYSTRAN/faster-whisper#requirements)。新增的视频转码接口需要另外安装下文的 FFmpeg 可执行程序。
 
 Windows 依赖固定 `av==16.0.1` 作为兼容性基线，该版本提供 [CPython 3.13 / Windows x64 wheel](https://pypi.org/project/av/16.0.1/#files)。这用于对照排查 PyAV 19.0.1 在目标服务器单独导入也长时间未完成的问题；尚不能仅凭版本回退认定服务器故障已解决。
 
@@ -160,7 +161,7 @@ faster-whisper 自身仍依赖 `huggingface-hub` 包，因此安装列表中出�
 | --- | --- | --- |
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | 监听地址与端口；仅本机访问可改成 `127.0.0.1` |
 | `APP_LOG_LEVEL` | `info` | 服务日志级别 |
-| `APP_API_KEY` | 空 | 空值关闭鉴权；设置后转写接口需要 Bearer Token |
+| `APP_API_KEY` | 空 | 空值关闭鉴权；设置后转写和视频接口需要 Bearer Token |
 | `APP_MAX_UPLOAD_MB` | `100` | 单音频文件上限，单位 MiB，在 multipart 解析后检查 |
 | `APP_MAX_AUDIO_SECONDS` | `1800` | 解码后的音频时长上限，单位秒 |
 | `APP_MAX_CONCURRENT_REQUESTS` | `1` | 同时执行的推理数；调高会增加 GPU 显存压力 |
@@ -233,6 +234,77 @@ curl.exe --fail-with-body http://127.0.0.1:8000/v1/audio/transcriptions `
 ```
 
 `/health` 和 `/docs` 不要求 API Key。前台按 `Ctrl+C` 停止服务；完成验证后先停止前台进程，再配置后台运行，避免端口冲突和重复加载模型。
+
+## FFmpeg GPU 视频转码
+
+### Windows 安装和配置
+
+从 [FFmpeg 官方下载页的 Windows 构建入口](https://ffmpeg.org/download.html#build-windows)选择包含 NVIDIA CUDA、NVENC 和 `scale_cuda` 的构建，解压，例如放在 `D:\tools\ffmpeg`。不需要安装 `ffmpeg-python`，本项目不新增 Python 依赖，也不会自动下载 FFmpeg。
+
+在 PowerShell 中检查实际解压路径及编译能力：
+
+```powershell
+& "D:\tools\ffmpeg\bin\ffmpeg.exe" -version
+& "D:\tools\ffmpeg\bin\ffmpeg.exe" -hide_banner -encoders | Select-String "h264_nvenc|hevc_nvenc"
+& "D:\tools\ffmpeg\bin\ffmpeg.exe" -hide_banner -hwaccels
+& "D:\tools\ffmpeg\bin\ffmpeg.exe" -hide_banner -filters | Select-String "scale_cuda"
+```
+
+应能看到两个 NVENC 编码器、`cuda` 硬件加速和 `scale_cuda` 滤镜。这只证明构建包含相应功能，仍需真实视频验证驱动和显卡可用。FFmpeg 所用 Video Codec SDK 对驱动有最低版本要求，请按构建说明更新 NVIDIA 驱动，参见 [NVIDIA FFmpeg 加速指南](https://docs.nvidia.com/video-technologies/video-codec-sdk/13.0/ffmpeg-with-nvidia-gpu/index.html)。FFmpeg 硬件视频编码主要使用 NVENC/NVDEC 单元，任务管理器请观察 Video Encode / Video Decode；ASR 主要使用 CUDA/Tensor 计算，两者仍会共享显存和部分资源。
+
+将以下内容加入**实际 `.env`**，然后重启服务：
+
+```dotenv
+FFMPEG_ENABLED=true
+FFMPEG_PATH="D:/tools/ffmpeg/bin/ffmpeg.exe"
+FFMPEG_GPU_INDEX=0
+FFMPEG_MAX_UPLOAD_MB=1024
+FFMPEG_MAX_OUTPUT_MB=2048
+FFMPEG_TIMEOUT_SECONDS=600
+FFMPEG_MAX_CONCURRENT_REQUESTS=1
+FFMPEG_QUEUE_TIMEOUT_SECONDS=30
+FFMPEG_TEMP_DIR=D:/asr-fast-temp
+```
+
+`FFMPEG_PATH` 也可填系统 `PATH` 中的命令名 `ffmpeg`；后台计划任务建议填写完整路径。`FFMPEG_TEMP_DIR` 可省略，默认使用系统临时目录；指定目录时会自动创建，运行账户需有写入权限。该目录存放上传副本和转码结果，需预留磁盘空间；响应发送完成或处理失败后清理各任务目录。进程被强制结束可能留下临时目录，可在停止服务后清理 `asr-fast-video-*`。
+
+视频与 ASR 使用独立并发队列和上传限制，默认各执行一个任务，因此可能同时占用同一张 GPU。根据实际显存和吞吐调整并发；视频默认允许 1 GiB 输入和 2 GiB 输出，超限返回 413，输出达到上限时丢弃结果。`FFMPEG_TIMEOUT_SECONDS` 是 FFmpeg 执行时限，排队另有时限。反向代理需要同时放行对应的请求体大小和等待时长。
+
+视频功能在请求时调用 FFmpeg，缺失程序不会阻止原有 ASR 启动；但服务仍需完成 Whisper 模型加载后才能接受 HTTP 请求。`FFMPEG_ENABLED=false` 可关闭视频接口。
+
+### 调用接口
+
+`POST /v1/video/transcode` 接收 `multipart/form-data`，成功直接返回 `video/mp4` 文件。支持自包含的 MP4/MOV、MKV/WebM、AVI、TS、MPEG、FLV、OGV 视频，上传内容必须包含视频流。只处理首条视频流和首条可选音轨；音频转为双声道 AAC 192k，不保留字幕、章节和附加音轨。不接受 URL、播放列表或任意 FFmpeg 参数。
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `file` | 必填 | 视频文件 |
+| `codec` | `h264` | `h264` 或 `hevc`（H.265）；H.264 兼容性更广 |
+| `preset` | `p4` | `p1`–`p7`，p1 最快，p7 更重视压缩效率 |
+| `quality` | `23` | CQ 质量值 1–51，越低质量越高、通常文件越大；不保证小于原文件 |
+| `height` | 留空 | 可选目标高度，144–4320 的偶数；宽度按比例计算，留空保留尺寸 |
+
+```powershell
+# H.264 GPU 转码，保留尺寸
+curl.exe --fail http://127.0.0.1:8000/v1/video/transcode `
+  -F "file=@D:/video/input.mp4" `
+  -o D:/video/output.mp4
+
+# H.265 GPU 转码并等比例缩放至 1080 高
+curl.exe --fail http://127.0.0.1:8000/v1/video/transcode `
+  -F "file=@D:/video/input.mp4" `
+  -F "codec=hevc" `
+  -F "height=1080" `
+  -F "preset=p4" `
+  -F "quality=23" `
+  -o D:/video/output-hevc.mp4
+```
+
+启用 `APP_API_KEY` 后，两个命令均需添加 `-H "Authorization: Bearer YOUR_API_KEY"`。也可在 `/docs` 的 `video` 分组上传视频并下载结果。此接口用于加快处理速度，输出保持原始播放速度，不做视频倍速播放或 ASR 转写。
+
+当前输出为 8-bit YUV 4:2:0，面向 SDR 视频；未实现 HDR 到 SDR 色调映射。不支持硬件解码的输入、缺少 CUDA/NVENC 功能的构建或不可用的 GPU 会报错，不自动切到软件编码。HTTP 422 表示输入或转码失败，查看服务器 FFmpeg 错误日志区分；503 表示功能关闭、程序无法启动或队列已满；504 表示转码超时。缺少必填文件或参数不合法也返回 422。
+
+部署验收应上传一段带音轨的视频及一段无音轨视频，检查输出可播放、音画同步、分辨率和编码正确，并观察 GPU Video Encode / Decode。仓库自动化测试覆盖接口、参数、子进程超时和清理；本地开发环境未验证 Windows/5070 实际硬件转码速度。
 
 ## 5. 后台部署与开机启动
 

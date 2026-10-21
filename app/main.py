@@ -1,5 +1,4 @@
 import logging
-import secrets
 import time
 from contextlib import asynccontextmanager
 from functools import partial
@@ -7,16 +6,16 @@ from typing import Annotated, Literal
 
 import anyio
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.asr import AudioTooLong, InvalidAudio, UnsupportedLanguage, WhisperService
+from app.auth import require_api_key
 from app.config import DOTENV_MODELSCOPE_ENDPOINT, ENV_FILE, get_settings
 from app.docs import setup_docs
 from app.logging_config import configure_logging
 from app.schemas import Transcription
+from app.video import router as video_router
 
 logger = logging.getLogger(__name__)
-security = HTTPBearer(auto_error=False)
 
 
 async def report_startup(service: WhisperService, started: float) -> None:
@@ -36,6 +35,7 @@ async def lifespan(app: FastAPI):
     service = WhisperService(settings)
     app.state.service = service
     app.state.slots = anyio.Semaphore(settings.app_max_concurrent_requests)
+    app.state.video_slots = anyio.Semaphore(settings.ffmpeg_max_concurrent_requests)
     app.state.ready = False
     started = time.monotonic()
     try:
@@ -70,17 +70,7 @@ app = FastAPI(
     docs_url=None, redoc_url=None,
 )
 setup_docs(app)
-
-
-async def require_api_key(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-) -> None:
-    expected = get_settings().app_api_key.get_secret_value()
-    if expected and (
-        credentials is None
-        or not secrets.compare_digest(credentials.credentials.encode(), expected.encode())
-    ):
-        raise HTTPException(401, "Invalid API key", headers={"WWW-Authenticate": "Bearer"})
+app.include_router(video_router)
 
 
 @app.get("/health", tags=["health"])

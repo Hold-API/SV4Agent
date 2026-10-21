@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     app_max_concurrent_requests: int = Field(default=1, ge=1, le=16)
     app_queue_timeout_seconds: float = Field(default=30, gt=0)
 
+    ffmpeg_enabled: bool = True
+    ffmpeg_path: str = Field(default="ffmpeg", min_length=1)
+    ffmpeg_gpu_index: int = Field(default=0, ge=0)
+    ffmpeg_max_upload_mb: int = Field(default=1024, ge=1)
+    ffmpeg_max_output_mb: int = Field(default=2048, ge=1)
+    ffmpeg_timeout_seconds: float = Field(default=600, gt=0)
+    ffmpeg_max_concurrent_requests: int = Field(default=1, ge=1, le=8)
+    ffmpeg_queue_timeout_seconds: float = Field(default=30, gt=0)
+    ffmpeg_temp_dir: Path | None = None
+
     modelscope_endpoint: str = Field(default="https://modelscope.cn", min_length=1)
     modelscope_api_token: SecretStr = SecretStr("")
     modelscope_revision: str = Field(default="master", min_length=1)
